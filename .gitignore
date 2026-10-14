@@ -16,6 +16,17 @@ cache/
 test.py
 test/
 app.log
+sample_data.csv
 
 # Vscode
 .vscode/
+
+# Runtime Artifacts & Uploads
+uploads/
+training_artifacts/
+catboost_info/
+
+# Frontend builds
+frontend/.next/
+frontend/out/
+frontend/node_modules/

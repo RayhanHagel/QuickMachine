@@ -107,6 +107,19 @@ if _HAS_CAT:
     _REGRESSION_MAP["CatBoost"] = CatBoostRegressor
     _CLASSIFICATION_MAP["CatBoost"] = CatBoostClassifier
 
+# Inject deep learning models (PyTorch & TensorFlow)
+try:
+    from backend.app.utilities.deep_learning import (
+        PyTorchMLPClassifier, PyTorchMLPRegressor,
+        TensorFlowMLPClassifier, TensorFlowMLPRegressor
+    )
+    _REGRESSION_MAP["PyTorch MLP"] = PyTorchMLPRegressor
+    _REGRESSION_MAP["TensorFlow MLP"] = TensorFlowMLPRegressor
+    _CLASSIFICATION_MAP["PyTorch MLP"] = PyTorchMLPClassifier
+    _CLASSIFICATION_MAP["TensorFlow MLP"] = TensorFlowMLPClassifier
+except ImportError:
+    pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Helper Method
