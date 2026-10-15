@@ -33,6 +33,15 @@ except ImportError:
     _HAS_TORCH = False
 
 
+def _get_best_device():
+    if _HAS_TORCH:
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+    return torch.device("cpu")
+
+
 def _get_torch_activation(act_name: str):
     name = str(act_name).lower().replace("-", "_")
     if name == "relu":
@@ -165,7 +174,8 @@ class PyTorchMLPClassifier(ClassifierMixin, PyTorchTabularBase):
         torch.manual_seed(int(self.random_state))
         np.random.seed(int(self.random_state))
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = _get_best_device()
+        is_cuda = device.type == "cuda"
         model = self._build_network(self.n_features_in_, n_classes).to(device)
         optimizer = self._get_optimizer(model)
         criterion = nn.CrossEntropyLoss()
@@ -183,8 +193,12 @@ class PyTorchMLPClassifier(ClassifierMixin, PyTorchTabularBase):
             X_train, y_train = X, y_encoded
             X_val, y_val = None, None
 
-        train_ds = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.long))
-        loader = DataLoader(train_ds, batch_size=max(8, int(self.batch_size)), shuffle=True)
+        train_ds = TensorDataset(torch.as_tensor(X_train, dtype=torch.float32), torch.as_tensor(y_train, dtype=torch.long))
+        loader = DataLoader(train_ds, batch_size=max(8, int(self.batch_size)), shuffle=True, pin_memory=is_cuda)
+
+        # Pre-allocate validation tensors on device once outside the epoch loop
+        t_val_x = torch.as_tensor(X_val, dtype=torch.float32, device=device) if X_val is not None else None
+        t_val_y = torch.as_tensor(y_val, dtype=torch.long, device=device) if y_val is not None else None
 
         best_loss = float("inf")
         patience_counter = 0
@@ -193,18 +207,19 @@ class PyTorchMLPClassifier(ClassifierMixin, PyTorchTabularBase):
         for _ in range(max(1, int(self.epochs))):
             model.train()
             for b_x, b_y in loader:
-                b_x, b_y = b_x.to(device), b_y.to(device)
+                b_x = b_x.to(device, non_blocking=is_cuda)
+                b_y = b_y.to(device, non_blocking=is_cuda)
                 optimizer.zero_grad()
                 out = model(b_x)
                 loss = criterion(out, b_y)
                 loss.backward()
                 optimizer.step()
 
-            if X_val is not None:
+            if t_val_x is not None:
                 model.eval()
                 with torch.no_grad():
-                    v_out = model(torch.tensor(X_val, dtype=torch.float32, device=device))
-                    val_loss = criterion(v_out, torch.tensor(y_val, dtype=torch.long, device=device)).item()
+                    v_out = model(t_val_x)
+                    val_loss = criterion(v_out, t_val_y).item()
 
                 if val_loss < best_loss:
                     best_loss = val_loss
@@ -267,7 +282,8 @@ class PyTorchMLPRegressor(RegressorMixin, PyTorchTabularBase):
         torch.manual_seed(int(self.random_state))
         np.random.seed(int(self.random_state))
 
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = _get_best_device()
+        is_cuda = device.type == "cuda"
         model = self._build_network(self.n_features_in_, 1).to(device)
         optimizer = self._get_optimizer(model)
         criterion = nn.MSELoss()
@@ -284,8 +300,12 @@ class PyTorchMLPRegressor(RegressorMixin, PyTorchTabularBase):
             X_train, y_train = X, y
             X_val, y_val = None, None
 
-        train_ds = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
-        loader = DataLoader(train_ds, batch_size=max(8, int(self.batch_size)), shuffle=True)
+        train_ds = TensorDataset(torch.as_tensor(X_train, dtype=torch.float32), torch.as_tensor(y_train, dtype=torch.float32))
+        loader = DataLoader(train_ds, batch_size=max(8, int(self.batch_size)), shuffle=True, pin_memory=is_cuda)
+
+        # Pre-allocate validation tensors on device once outside the epoch loop
+        t_val_x = torch.as_tensor(X_val, dtype=torch.float32, device=device) if X_val is not None else None
+        t_val_y = torch.as_tensor(y_val, dtype=torch.float32, device=device) if y_val is not None else None
 
         best_loss = float("inf")
         patience_counter = 0
@@ -294,18 +314,19 @@ class PyTorchMLPRegressor(RegressorMixin, PyTorchTabularBase):
         for _ in range(max(1, int(self.epochs))):
             model.train()
             for b_x, b_y in loader:
-                b_x, b_y = b_x.to(device), b_y.to(device)
+                b_x = b_x.to(device, non_blocking=is_cuda)
+                b_y = b_y.to(device, non_blocking=is_cuda)
                 optimizer.zero_grad()
                 out = model(b_x)
                 loss = criterion(out, b_y)
                 loss.backward()
                 optimizer.step()
 
-            if X_val is not None:
+            if t_val_x is not None:
                 model.eval()
                 with torch.no_grad():
-                    v_out = model(torch.tensor(X_val, dtype=torch.float32, device=device))
-                    val_loss = criterion(v_out, torch.tensor(y_val, dtype=torch.float32, device=device)).item()
+                    v_out = model(t_val_x)
+                    val_loss = criterion(v_out, t_val_y).item()
 
                 if val_loss < best_loss:
                     best_loss = val_loss
@@ -504,10 +525,11 @@ class TensorFlowMLPClassifier(ClassifierMixin, TensorFlowTabularBase):
         )
 
         self.model_ = model
-        self._weights = [
-            w.detach().cpu().numpy() if hasattr(w, "detach") else np.array(w)
-            for w in model.get_weights()
-        ]
+        self._weights = model.get_weights()
+        try:
+            keras.backend.clear_session()
+        except Exception:
+            pass
         return self
 
     def predict_proba(self, X):
@@ -571,10 +593,11 @@ class TensorFlowMLPRegressor(RegressorMixin, TensorFlowTabularBase):
         )
 
         self.model_ = model
-        self._weights = [
-            w.detach().cpu().numpy() if hasattr(w, "detach") else np.array(w)
-            for w in model.get_weights()
-        ]
+        self._weights = model.get_weights()
+        try:
+            keras.backend.clear_session()
+        except Exception:
+            pass
         return self
 
     def predict(self, X):

@@ -137,19 +137,26 @@ async def stream_job_events(job_id: str):
                 yield f"data: {json.dumps(current)}\n\n"
 
             while True:
-                # Poll queue asynchronously
-                try:
-                    event = q.get_nowait()
-                    yield f"data: {json.dumps(event)}\n\n"
-                    if event.get("status") in ["completed", "failed", "cancelled"]:
+                has_event = False
+                # Drain all available events in queue immediately
+                while True:
+                    try:
+                        event = q.get_nowait()
+                        has_event = True
+                        yield f"data: {json.dumps(event)}\n\n"
+                        if event.get("status") in ["completed", "failed", "cancelled"]:
+                            return
+                    except queue.Empty:
                         break
-                except queue.Empty:
+
+                if not has_event:
                     # Check if job completed while queue was empty
                     current = get_training_job_status(safe_job_id)
                     if current and current.get("status") in ["completed", "failed", "cancelled"]:
                         yield f"data: {json.dumps(current)}\n\n"
                         break
-                    await asyncio.sleep(0.5)
+                    # Low-latency 100ms idle sleep for instant UI responsiveness
+                    await asyncio.sleep(0.1)
         finally:
             unsubscribe_from_job(safe_job_id, q)
 

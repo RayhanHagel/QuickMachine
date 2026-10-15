@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from backend.app.routers.data import router as data_router
 from backend.app.routers.config import router as config_router
@@ -10,6 +11,9 @@ app = FastAPI(
     description="Automated Machine Learning & Model Stacking API backend",
     version="2.0.0"
 )
+
+# Enable response GZip compression for large JSON payloads
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Enable CORS for Next.js frontend (development on localhost:3000, 3001, etc.)
 app.add_middleware(

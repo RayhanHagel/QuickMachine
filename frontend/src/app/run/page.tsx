@@ -45,12 +45,31 @@ import {
   TrainingJobSummary,
 } from "@/lib/api";
 
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"' || char === "'") {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      result.push(cur.trim());
+      cur = "";
+    } else {
+      cur += char;
+    }
+  }
+  result.push(cur.trim());
+  return result;
+}
+
 function parseCsvText(text: string): Record<string, any>[] {
   const lines = text.trim().split(/\r?\n/).filter(Boolean);
   if (lines.length < 2) return [];
-  const headers = lines[0].split(",").map((h) => h.trim().replace(/^["']|["']$/g, ""));
+  const headers = parseCsvLine(lines[0]).map((h) => h.replace(/^["']|["']$/g, ""));
   return lines.slice(1).map((line) => {
-    const vals = line.split(",").map((v) => v.trim().replace(/^["']|["']$/g, ""));
+    const vals = parseCsvLine(line).map((v) => v.replace(/^["']|["']$/g, ""));
     const row: Record<string, any> = {};
     headers.forEach((h, idx) => {
       const val = vals[idx] ?? "";
@@ -58,6 +77,16 @@ function parseCsvText(text: string): Record<string, any>[] {
     });
     return row;
   });
+}
+
+function sampleChartPoints<T>(points: T[] | undefined, maxPoints = 250): T[] {
+  if (!points || points.length <= maxPoints) return points || [];
+  const step = Math.ceil(points.length / maxPoints);
+  const sampled: T[] = [];
+  for (let i = 0; i < points.length; i += step) {
+    sampled.push(points[i]);
+  }
+  return sampled;
 }
 
 function downloadCsv(records: Record<string, any>[], filename: string) {
@@ -718,7 +747,7 @@ function ConfigRunContent() {
                       <XAxis type="number" dataKey="actual" name="Actual" label={{ value: "Actual", position: "insideBottom", offset: -10 }} />
                       <YAxis type="number" dataKey="predicted" name="Predicted" label={{ value: "Predicted", angle: -90, position: "insideLeft" }} />
                       <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-                      <Scatter name="Samples" data={results.charts.scatter_points} fill="#2563eb" fillOpacity={0.6} />
+                      <Scatter name="Samples" data={sampleChartPoints(results.charts.scatter_points)} fill="#2563eb" fillOpacity={0.6} />
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>
@@ -753,7 +782,7 @@ function ConfigRunContent() {
                       <XAxis type="number" dataKey="predicted" name="Predicted" label={{ value: "Predicted", position: "insideBottom", offset: -10 }} />
                       <YAxis type="number" dataKey="residual" name="Residual" label={{ value: "Residual", angle: -90, position: "insideLeft" }} />
                       <Tooltip cursor={{ strokeDasharray: "3 3" }} />
-                      <Scatter name="Residuals" data={results.charts.residual_points} fill="#f97316" fillOpacity={0.6} />
+                      <Scatter name="Residuals" data={sampleChartPoints(results.charts.residual_points)} fill="#f97316" fillOpacity={0.6} />
                     </ScatterChart>
                   </ResponsiveContainer>
                 </div>

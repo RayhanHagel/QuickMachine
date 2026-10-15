@@ -80,22 +80,24 @@ def load_and_preprocess_dataset(config_path_or_name: str | Path) -> Tuple[pd.Dat
             feature_pd = pd.concat([feature_pd, feature], axis=1)
             target_pd = pd.concat([target_pd, target], axis=1)
 
-    # Coerce Types to Numeric where possible
-    for col in feature_pd.columns:
-        if feature_pd[col].dtype == "object":
-            feature_pd[col] = feature_pd[col].astype(str).str.strip().replace({"": np.nan, "nan": np.nan, "None": np.nan})
-        try:
-            feature_pd[col] = pd.to_numeric(feature_pd[col], errors="raise")
-        except (ValueError, TypeError):
-            continue
+    def _coerce_df_numeric(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
+        df = df.copy()
+        for col in df.columns:
+            if df[col].dtype == "object":
+                s = df[col].astype(str).str.strip()
+                s = s.replace({"": np.nan, "nan": np.nan, "None": np.nan, "NULL": np.nan, "null": np.nan})
+                converted = pd.to_numeric(s, errors="coerce")
+                # If non-null values converted successfully without losing valid strings
+                if not converted.dropna().empty and converted.notnull().sum() >= s.notnull().sum() * 0.9:
+                    df[col] = converted
+                else:
+                    df[col] = s
+        return df
 
-    for col in target_pd.columns:
-        if target_pd[col].dtype == "object":
-            target_pd[col] = target_pd[col].astype(str).str.strip().replace({"": np.nan, "nan": np.nan, "None": np.nan})
-        try:
-            target_pd[col] = pd.to_numeric(target_pd[col], errors="raise")
-        except (ValueError, TypeError):
-            continue
+    feature_pd = _coerce_df_numeric(feature_pd)
+    target_pd = _coerce_df_numeric(target_pd)
 
     feature_int_pd = feature_pd.select_dtypes(include=["number"])
     feature_cat_pd = feature_pd.select_dtypes(exclude=["number"])
@@ -103,12 +105,29 @@ def load_and_preprocess_dataset(config_path_or_name: str | Path) -> Tuple[pd.Dat
     return feature_pd, target_pd, feature_int_pd, feature_cat_pd
 
 
+# In-memory inspection cache keyed by resolved path and mtime
+_INSPECTION_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+
+
 def inspect_dataset_configuration(name: str) -> Dict[str, Any]:
     """
     Loads dataset, calculates missing values, detects columns, and returns
-    full inspection metadata for the frontend.
+    full inspection metadata for the frontend, with mtime-based caching.
     """
-    feature_pd, target_pd, feature_int_pd, feature_cat_pd = load_and_preprocess_dataset(name)
+    target_path = Path(name)
+    if not target_path.exists():
+        target_path = CONFIGURED_DATA_DIR / name
+        if not target_path.exists():
+            raise FileNotFoundError(f"Configuration file not found: {name}")
+
+    mtime = target_path.stat().st_mtime
+    cache_key = str(target_path.resolve())
+    if cache_key in _INSPECTION_CACHE:
+        cached_mtime, cached_result = _INSPECTION_CACHE[cache_key]
+        if cached_mtime == mtime:
+            return cached_result
+
+    feature_pd, target_pd, feature_int_pd, feature_cat_pd = load_and_preprocess_dataset(target_path)
 
     combined_df = pd.concat([feature_pd, target_pd], axis=1)
     missing_data = combined_df.isnull().sum()
@@ -138,7 +157,7 @@ def inspect_dataset_configuration(name: str) -> Dict[str, Any]:
         sample = sample.fillna("NaN")
         return sample.to_dict(orient="records")
 
-    return {
+    result = {
         "dataset_name": name,
         "total_rows": row_total,
         "feature_count": len(feature_pd.columns),
@@ -162,6 +181,12 @@ def inspect_dataset_configuration(name: str) -> Dict[str, Any]:
             "target": to_clean_records(target_pd)
         }
     }
+
+    if len(_INSPECTION_CACHE) > 50:
+        _INSPECTION_CACHE.pop(next(iter(_INSPECTION_CACHE)), None)
+    _INSPECTION_CACHE[cache_key] = (mtime, result)
+
+    return result
 
 
 def save_pipeline_configuration(config_dict: Dict[str, Any], save_name: str) -> Path:

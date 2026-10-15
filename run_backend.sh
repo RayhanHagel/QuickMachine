@@ -17,5 +17,11 @@ else
     PYTHON_BIN="$(which python3 || echo 'python3')"
 fi
 
-echo "Starting QuickMachine FastAPI backend on http://0.0.0.0:8000 using $PYTHON_BIN..."
-exec "$PYTHON_BIN" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+WORKERS="${WORKERS:-1}"
+if [ "$WORKERS" -gt 1 ]; then
+    echo "Starting QuickMachine FastAPI backend on http://0.0.0.0:8000 ($WORKERS workers) using $PYTHON_BIN..."
+    exec "$PYTHON_BIN" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --workers "$WORKERS"
+else
+    echo "Starting QuickMachine FastAPI backend on http://0.0.0.0:8000 using $PYTHON_BIN..."
+    exec "$PYTHON_BIN" -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+fi

@@ -1,9 +1,11 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
+from starlette.concurrency import run_in_threadpool
 from typing import List, Optional
 import json
 
 from backend.app.services.data_service import (
     save_uploaded_file,
+    save_uploaded_stream,
     list_configured_datasets,
     get_configured_dataset,
     save_dataset_configuration,
@@ -40,11 +42,11 @@ def delete_config(name: str):
 
 @router.post("/upload")
 async def upload_files(files: List[UploadFile] = File(...)):
-    """Uploads one or multiple files and returns parsed metadata."""
+    """Uploads one or multiple files and returns parsed metadata without blocking event loop."""
     uploaded_items = []
     for f in files:
-        contents = await f.read()
-        item_info = save_uploaded_file(contents, f.filename)
+        # Offload streaming write and file parsing to threadpool to keep event loop responsive
+        item_info = await run_in_threadpool(save_uploaded_stream, f.file, f.filename)
         uploaded_items.append(item_info)
     return {"files": uploaded_items}
 
